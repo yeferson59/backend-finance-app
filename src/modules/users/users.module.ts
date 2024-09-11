@@ -6,6 +6,6 @@ import { ValidateIdPipe } from './pipes/validateId.pipes';
 
 @Module({
   controllers: [UsersController],
-  providers: [UsersService, PrismaService, ValidateIdPipe],
+  providers: [UsersService, PrismaService, ValidateIdPipe]
 })
 export class UsersModule { }
