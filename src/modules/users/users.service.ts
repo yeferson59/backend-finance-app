@@ -3,7 +3,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { User } from './interfaces/user.interface';
-import { removeRoleIdUser } from './utils/functions';
+import { encrypt, formatName, removeRoleIdUser } from './utils/functions';
 
 @Injectable()
 export class UsersService {
@@ -28,10 +28,17 @@ export class UsersService {
     const { email } = createUserDto;
     const userFound = await this.findOneEmail(email);
     if (userFound) throw new ConflictException('User exist yet');
+    const { password: receivePassword, name: receiveName, lastName: recieveLastName } = createUserDto;
+    const hash = await encrypt(receivePassword);
+    const correctName = await formatName(receiveName);
+    const correctLastname = await formatName(recieveLastName);
     if (!createUserDto.role) {
-      const { role, ...rest } = createUserDto;
+      const { role, password, name, lastName, ...rest } = createUserDto;
       const data = {
-        ...rest
+        ...rest,
+        name: correctName,
+        lastName: correctLastname,
+        password: hash
       };
       const user = await this.prismaService.user.create({ data: data, include: { role: true } });
       return await removeRoleIdUser(user);
@@ -41,10 +48,13 @@ export class UsersService {
     });
     if (!role) throw new NotFoundException();
     const { id } = role
-    const { role: roleName, ...re } = createUserDto;
+    const { role: roleName, password, name, lastName, ...re } = createUserDto;
     const data = {
       roleId: id,
-      ...re
+      ...re,
+      password: hash,
+      name: correctName,
+      lastName: correctLastname
     }
     const user = await this.prismaService.user.create({ data: data, include: { role: true } });
     return await removeRoleIdUser(user);
@@ -66,7 +76,19 @@ export class UsersService {
 
   async update(id: string, updateUserDto: UpdateUserDto) {
     const userFound = await this.findOne(id);
+    if (updateUserDto.email) {
+      const isExistEmail = await this.findOneEmail(updateUserDto.email);
+      if (isExistEmail) throw new ConflictException('User exist with the same email');
+    }
     if (!userFound) throw new NotFoundException();
+    if (updateUserDto.name) {
+      const { name } = updateUserDto;
+      updateUserDto.name = await formatName(name);
+    }
+    if (updateUserDto.lastName) {
+      const { lastName } = updateUserDto;
+      updateUserDto.lastName = await formatName(lastName);
+    }
     if (!updateUserDto.role) {
       const { role, ...rest } = updateUserDto;
       const dataUser = {
