@@ -26,6 +26,7 @@
     "@nestjs/core": "^10.4.1",
     "@nestjs/mapped-types": "*",
     "@nestjs/platform-express": "^10.4.1",
+    "@nestjs/schedule": "^4.1.0",
     "@prisma/adapter-libsql": "^5.19.1",
     "@prisma/client": "^5.19.1",
     "axios": "^1.7.7",

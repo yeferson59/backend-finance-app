@@ -1,34 +1,101 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { Controller, Get, Param, Post, Body, Put, Query, HttpException, HttpStatus } from '@nestjs/common';
 import { MarketDataService } from './market-data.service';
-import { CreateMarketDatumDto } from './dto/create-market-datum.dto';
-import { UpdateMarketDatumDto } from './dto/update-market-datum.dto';
+import { Stock, StockPrice, DailySummary } from '@prisma/client';
 
 @Controller('market-data')
 export class MarketDataController {
-  constructor(private readonly marketDataService: MarketDataService) {}
+  constructor(private readonly marketDataService: MarketDataService) { }
 
-  @Post()
-  create(@Body() createMarketDatumDto: CreateMarketDatumDto) {
-    return this.marketDataService.create(createMarketDatumDto);
+  // 1. Obtener información de una acción por su símbolo
+  @Get('stock/:symbol')
+  async getStock(@Param('symbol') symbol: string): Promise<Stock | null> {
+    try {
+      const stock = await this.marketDataService.getStock(symbol);
+      if (!stock) {
+        throw new HttpException('Stock not found', HttpStatus.NOT_FOUND);
+      }
+      return stock;
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
   }
 
-  @Get()
-  findAll() {
-    return this.marketDataService.findAll();
+  // 1. Obtener precios históricos de una acción en un intervalo de fechas
+  @Get('stock/:symbol/prices/range')
+  async getStockPricesInDateRange(
+    @Param('symbol') symbol: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string
+  ): Promise<StockPrice[]> {
+    try {
+      // Valida y convierte las fechas de las consultas
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        throw new HttpException('Invalid date format', HttpStatus.BAD_REQUEST);
+      }
+
+      return await this.marketDataService.getStockPricesInDateRange(symbol, start, end);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.marketDataService.findOne(+id);
+  // 2. Crear o actualizar información de una acción
+  @Post('stock')
+  async upsertStock(@Body() stockData: Partial<Stock>): Promise<Stock> {
+    try {
+      return await this.marketDataService.upsertStock(stockData);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+    }
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateMarketDatumDto: UpdateMarketDatumDto) {
-    return this.marketDataService.update(+id, updateMarketDatumDto);
+  // 3. Obtener precios históricos de una acción
+  @Get('stock/:symbol/prices')
+  async getStockPrices(@Param('symbol') symbol: string): Promise<StockPrice[]> {
+    try {
+      return await this.marketDataService.getStockPrices(symbol);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.marketDataService.remove(+id);
+  // 4. Actualizar precios históricos de una acción desde Alpha Vantage
+  @Put('stock/:symbol/prices')
+  async updateStockPrices(
+    @Param('symbol') symbol: string,
+    @Query('outputSize') outputSize: 'compact' | 'full' = 'compact',
+  ): Promise<void> {
+    try {
+      await this.marketDataService.updateStockPricesFromAlphaVantage(symbol, outputSize);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  // 5. Obtener resumen diario del mercado
+  @Get('daily-summary')
+  async getDailySummary(@Query('date') date: string): Promise<DailySummary | null> {
+    try {
+      const parsedDate = new Date(date);
+      if (isNaN(parsedDate.getTime())) {
+        throw new HttpException('Invalid date format', HttpStatus.BAD_REQUEST);
+      }
+      return await this.marketDataService.getDailySummary(parsedDate);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  // 6. Crear o actualizar el resumen diario del mercado
+  @Post('daily-summary')
+  async upsertDailySummary(@Body() summaryData: Partial<DailySummary>): Promise<DailySummary> {
+    try {
+      return await this.marketDataService.upsertDailySummary(summaryData);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+    }
   }
 }
