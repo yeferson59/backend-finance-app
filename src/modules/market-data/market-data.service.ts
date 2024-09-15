@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Axios } from 'axios';
+import axios from 'axios';
 import { Stock, StockPrice, DailySummary } from '@prisma/client';
 
 @Injectable()
@@ -11,8 +11,7 @@ export class MarketDataService {
   private readonly alphaVantageBaseUrl = 'https://www.alphavantage.co/query';
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly httpService: Axios,
+    private readonly prisma: PrismaService
   ) { }
 
   // 1. Obtener información de una acción
@@ -59,15 +58,50 @@ export class MarketDataService {
   }
 
   // 3. Obtener precios históricos de una acción
-  async getStockPrices(symbol: string): Promise<StockPrice[]> {
-    const stock = await this.getStock(symbol);
-    if (!stock) throw new Error(`Stock with symbol ${symbol} not found`);
+  async getStockPrices(
+    symbol: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<StockPrice[]> {
+    // Primero buscamos la acción en la base de datos
+    let stock = await this.getStock(symbol);
 
+    // Si no se encuentra, hacer la petición a la API externa
+    if (!stock) {
+      this.logger.log(`Stock ${symbol} not found in database. Fetching from Alpha Vantage.`);
+      try {
+        await this.updateStockPricesFromAlphaVantage(symbol, 'full'); // Puedes usar 'compact' si quieres solo datos recientes.
+        // Ahora que los datos se han obtenido, volvemos a buscar la acción
+        stock = await this.getStock(symbol);
+        if (!stock) {
+          throw new Error(`Failed to fetch and store stock with symbol ${symbol}`);
+        }
+      } catch (error) {
+        this.logger.error(`Error fetching stock data from Alpha Vantage: ${error.message}`);
+        throw new Error(`Failed to fetch stock data from Alpha Vantage for ${symbol}`);
+      }
+    }
+
+    // Definir la cláusula where para las fechas
+    const whereClause: any = { stockId: stock.id };
+
+    if (startDate || endDate) {
+      whereClause.date = {};
+      if (startDate) {
+        whereClause.date.gte = startDate;
+      }
+      if (endDate) {
+        whereClause.date.lte = endDate;
+      }
+    }
+
+    // Consultar los precios históricos de la acción en la base de datos
     return this.prisma.stockPrice.findMany({
-      where: { stockId: stock.id },
+      where: whereClause,
       orderBy: { date: 'asc' },
     });
   }
+
 
   // 4. Actualizar precios históricos de una acción desde Alpha Vantage
   async updateStockPricesFromAlphaVantage(
@@ -77,7 +111,7 @@ export class MarketDataService {
     const url = `${this.alphaVantageBaseUrl}?function=TIME_SERIES_DAILY&symbol=${symbol}&outputsize=${outputSize}&apikey=${this.alphaVantageApiKey}`;
 
     try {
-      const response = await this.httpService.get(url);
+      const response = await axios.get(url);
       const data = response.data['Time Series (Daily)'];
 
       if (!data) {
@@ -85,7 +119,17 @@ export class MarketDataService {
         return;
       }
 
-      const stock = await this.upsertStock({ symbol });
+      // Obtener la información de la acción (overview)
+      const stockOverview = await this.fetchStockOverview(symbol);
+
+      // Upsert the stock (crear o actualizar la acción)
+      const stock = await this.upsertStock({
+        symbol: stockOverview.symbol,
+        name: stockOverview.name,
+        sector: stockOverview.sector,
+        industry: stockOverview.industry,
+        marketCap: stockOverview.marketCap,
+      });
 
       const stockPrices = Object.entries(data).map(
         ([date, dailyData]: [string, any]) => ({
@@ -99,11 +143,11 @@ export class MarketDataService {
         }),
       );
 
-      // Bulk create or update stock prices in a transaction
+      // Insertar o actualizar los precios históricos de la acción
       await this.prisma.$transaction(
         stockPrices.map((price) =>
           this.prisma.stockPrice.upsert({
-            where: { date_stockId: { date: price.date, stockId: stock.id } },
+            where: { date_stockId: { date: price.date, stockId: price.stockId } },
             create: price,
             update: {
               openPrice: price.openPrice,
@@ -116,14 +160,14 @@ export class MarketDataService {
         ),
       );
 
-      this.logger.log(`Updated stock prices for ${symbol}`);
+      this.logger.log(`Stock prices updated for ${symbol}`);
     } catch (error) {
-      this.logger.error(
-        `Error updating stock prices for ${symbol}: ${error.message}`,
-      );
+      this.logger.error(`Error fetching stock prices from Alpha Vantage: ${error.message}`);
       throw new Error(`Failed to update stock prices for ${symbol}`);
     }
   }
+
+
 
   // 5. Método de cron para actualizar los precios automáticamente cada día
   @Cron(CronExpression.EVERY_DAY_AT_11PM)
@@ -159,4 +203,29 @@ export class MarketDataService {
       update: rest as Omit<DailySummary, 'id' | 'createdAt'>,
     });
   }
+
+  async fetchStockOverview(symbol: string): Promise<any> {
+    const url = `${this.alphaVantageBaseUrl}?function=OVERVIEW&symbol=${symbol}&apikey=${this.alphaVantageApiKey}`;
+    try {
+      const response = await axios.get(url);
+      const data = response.data;
+
+      if (!data || !data.Symbol) {
+        this.logger.warn(`No overview data received for symbol ${symbol}`);
+        throw new Error(`No overview data for ${symbol}`);
+      }
+
+      return {
+        symbol: data.Symbol,
+        name: data.Name,
+        sector: data.Sector,
+        industry: data.Industry,
+        marketCap: parseInt(data.MarketCapitalization, 10) || 0,
+      };
+    } catch (error) {
+      this.logger.error(`Error fetching stock overview for ${symbol}: ${error.message}`);
+      throw new Error(`Failed to fetch stock overview for ${symbol}`);
+    }
+  }
+
 }
