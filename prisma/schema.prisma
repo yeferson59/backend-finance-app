@@ -14,30 +14,38 @@ datasource db {
 model Role {
   id   Int    @id @default(autoincrement())
   name String @unique
-  user User[]
+
+  users User[]
 
   @@map("role")
 }
 
 model User {
-  id            String          @id @default(uuid())
+  id            String    @id @default(uuid())
   name          String?
-  lastName      String?         @map("last_name")
-  username      String?
+  lastName      String?   @map("last_name")
+  username      String?   @unique // Indexed for faster searches
   password      String?
-  email         String          @unique
-  emailVerified DateTime?       @map("email_verified")
+  email         String    @unique
+  emailVerified DateTime? @map("email_verified")
   image         String?
-  accounts      Account[]
-  sessions      Session[]
-  roleId        Int             @default(1) @map("role_id")
-  // Optional for WebAuthn support
-  Authenticator Authenticator[]
+  phone         String?   @unique
+  isActive      Boolean   @default(true) @map("is_active")
+  lastLogin     DateTime  @default(now()) @map("last_login")
+  roleId        Int       @map("role_id")
+
+  portfolios     Portfolio[]
+  auditLogs      AuditLog[]
+  notifications  Notification[]
+  accounts       Account[]
+  sessions       Session[]
+  authenticators Authenticator[]
+  alert          Alert[]
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
-
-  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@map("user")
 }
@@ -105,57 +113,450 @@ model Authenticator {
   @@map("authenticator")
 }
 
+model Portfolio {
+  id           String    @id @default(uuid())
+  name         String
+  description  String?
+  objective    String
+  updateLatest DateTime  @updatedAt @map("updated_latest") // Triggered update
+  createdAt    DateTime  @default(now()) @map("created_at")
+  userId       String    @map("user_id")
+  riskId       Int       @map("risk_id")
+  totalValue   Decimal   @default(0.0) @map("total_value") // Total portfolio value
+  finishDate   DateTime? @map("finish_date")
+
+  performances    Performance[]
+  valuations      Valuation[]
+  portfolioAssets PortfolioAsset[]
+  transactions    Transaction[]
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  risk Risk @relation(fields: [riskId], references: [id])
+
+  @@map("portfolio")
+}
+
+model Valuation {
+  id          Int      @id @default(autoincrement())
+  date        DateTime @default(now())
+  totalValue  Decimal  @default(0.0) @map("total_value")
+  portfolioId String   @map("portfolio_id")
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id])
+
+  @@map("valuation")
+}
+
+model Performance {
+  id          Int      @id @default(autoincrement())
+  date        DateTime @default(now())
+  updateValue Decimal  @map("updated_value")
+  totalValue  Decimal  @map("total_value")
+  portfolioId String   @map("portfolio_id")
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id])
+
+  @@map("performance")
+}
+
+model Risk {
+  id   Int    @id @default(autoincrement())
+  name String
+
+  portfolios Portfolio[]
+
+  @@map("risk")
+}
+
+model Currency {
+  id           Int     @id @default(autoincrement())
+  name         String
+  symbol       String  @unique
+  exchangeRate Decimal @map("exchange_rate")
+
+  stocks Stock[]
+
+  @@map("currency")
+}
+
+model Transaction {
+  id                String   @id @default(uuid())
+  date              DateTime @default(now())
+  price             Decimal
+  stock             Decimal
+  typeTransactionId Int      @map("type_transaction_id")
+  portfolioId       String   @map("portfolio_id")
+  fee               Decimal  @default(0.0)
+  exchangeRate      Decimal?
+
+  portfolio       Portfolio       @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  typeTransaction TypeTransaction @relation(fields: [typeTransactionId], references: [id], onDelete: Restrict)
+
+  @@index([date, typeTransactionId])
+  @@map("transaction")
+}
+
+model TypeTransaction {
+  id           Int           @id @default(autoincrement())
+  name         String        @unique
+  transactions Transaction[]
+
+  @@map("type_transaction")
+}
+
+model PortfolioAsset {
+  id           String   @id @default(uuid())
+  date         DateTime @default(now())
+  dateAdded    DateTime @default(now()) @map("date_added")
+  stock        Decimal
+  weight       Decimal
+  initialPrice Decimal  @map("initial_price")
+  portfolioId  String   @map("portfolio_id")
+  assetId      String   @map("asset_id")
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  asset     Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([dateAdded, portfolioId, assetId])
+  @@map("portfolio_asset")
+}
+
+model Country {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+  code String
+
+  exchanges Exchange[]
+  ForexFrom Forex[]    @relation("ForexFromCountry")
+  ForexTo   Forex[]    @relation("ForexToCountry")
+
+  @@map("country")
+}
+
+model Exchange {
+  id        Int    @id @default(autoincrement())
+  name      String @unique
+  countryId Int    @map("country_id")
+
+  assets Asset[]
+
+  country Country @relation(fields: [countryId], references: [id])
+
+  @@map("exchange")
+}
+
+model Asset {
+  id           String    @id @default(uuid())
+  name         String
+  description  String?
+  initialPrice Decimal?  @map("initial_price")
+  initialDate  DateTime? @map("initial_date")
+  typeAssetId  Int       @map("type_asset_id")
+  exchangeId   Int       @map("exchange_id")
+
+  priceHistories  PriceHistory[]
+  stocks          Stock[]
+  etfs            ETF[]
+  cryptos         Crypto[]
+  commodities     Commodity[]
+  forex           Forex[]
+  portfolioAssets PortfolioAsset[]
+  alerts          Alert[]
+
+  typeAsset TypeAsset @relation(fields: [typeAssetId], references: [id])
+  exchange  Exchange  @relation(fields: [exchangeId], references: [id])
+
+  @@index([name, initialDate])
+  @@map("asset")
+}
+
+model TypeAsset {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+
+  assets Asset[]
+
+  @@map("type_asset")
+}
+
+model intervalTime {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+
+  priceHistory PriceHistory[]
+
+  @@map("interval_time")
+}
+
+model PriceHistory {
+  id         String   @id @default(uuid())
+  datePrice  DateTime @map("date_price")
+  openPrice  Decimal  @map("open_price")
+  highPrice  Decimal  @map("high_price")
+  lowPrice   Decimal  @map("low_price")
+  closePrice Float    @map("close_price")
+  volume     BigInt
+  createdAt  DateTime @default(now()) @map("created_at")
+  assetId    String   @map("asset_id")
+  intervalId Int      @map("interval_id")
+
+  intervalTime intervalTime @relation(fields: [intervalId], references: [id])
+  asset        Asset        @relation(fields: [assetId], references: [id])
+
+  @@index([datePrice])
+  @@map("price_history")
+}
+
 model Stock {
-  id        Int      @id @default(autoincrement())
-  symbol    String   @unique
-  name      String
-  sector    String?
-  industry  String?
-  marketCap Float?   @map("market_cap")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  assetId                 String    @id @map("asset_id")
+  ticker                  String    @unique
+  sector                  String?
+  industry                String?
+  marketCap               BigInt?   @map("market_cap")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
+  dividendPerShare        Decimal   @default(0.0) @map("dividend_per_share")
+  dividendYield           Decimal   @default(0.0) @map("dividend_yield")
+  dividendDate            DateTime? @map("dividend_date")
+  exDividendDate          DateTime? @map("exdividend_date")
+  currencyId              Int       @map("currency_id")
+  address                 String?
+  officialSite            String?   @map("official_site")
+  latestQuarter           DateTime  @map("lastest_quater")
+  ebitda                  Decimal?
+  peRatio                 Decimal?  @map("pe_ratio")
+  pegRatio                Decimal?  @map("peg_ratio")
+  bookValue               Decimal?  @map("book_value")
+  eps                     Decimal?
+  analystTargetPrice      Decimal?  @map("analyst_target_price")
+  analystRatingStrongBuy  Int       @default(0) @map("analyst_rating_strong_price")
+  analystRatingBuy        Int       @default(0) @map("analyst_rating_buy")
+  analystRatingHold       Int       @default(0) @map("analyst_rating_hold")
+  analystRatingSell       Int       @default(0) @map("analyst_rating_sell")
+  analystRatingStrongSell Int       @default(0) @map("analyst_rating_strong_sell")
+  sharesOutstanding       BigInt    @map("shares_outstanding")
 
-  // Relación con los precios históricos
-  prices       StockPrice[]  @relation("StockPrices")
-  dailySummary DailySummary? @relation("DailySummary")
+  historicalStockData HistoricalStockData[]
 
-  @@index([symbol])
+  asset    Asset    @relation(fields: [assetId], references: [id])
+  currency Currency @relation(fields: [currencyId], references: [id])
+
+  @@index([sector, industry, marketCap, exDividendDate, dividendYield, peRatio])
   @@map("stock")
 }
 
-model StockPrice {
+model HistoricalStockData {
   id         Int      @id @default(autoincrement())
-  date       DateTime
-  openPrice  Float    @map("open_price")
-  highPrice  Float    @map("high_price")
-  lowPrice   Float    @map("low_price")
-  closePrice Float    @map("close_price")
-  volume     Int
-  stockId    Int      @map("stock_id")
-  createdAt  DateTime @default(now()) @map("created_at")
+  datePrice  DateTime @map("date_price") // Fecha del registro
+  closePrice Decimal  @map("close_price") // Precio de cierre
+  openPrice  Decimal? @map("open_price") // Precio de apertura
+  highPrice  Decimal? @map("high_price") // Precio más alto del día
+  lowPrice   Decimal? @map("low_price") // Precio más bajo del día
+  volume     BigInt? // Volumen de operaciones
+  dividend   Decimal? // Dividendos pagados en esa fecha
+  split      Decimal? // Información sobre split de acciones (ej. 2:1)
+  stockId    String   @map("stock_id")
 
-  // Relación con el stock
-  stock Stock @relation("StockPrices", fields: [stockId], references: [id])
+  stock Stock @relation(fields: [stockId], references: [assetId])
 
-  @@unique([date, stockId]) // Un precio por fecha para cada acción
-  @@index([date])
-  @@index([stockId])
-  @@map("stock_price")
+  @@index([datePrice])
+  @@map("historical_stock_data")
 }
 
-model DailySummary {
+model ETF {
+  assetId  String  @id @map("asset_id")
+  manager  String
+  dividend Decimal @default(0.0)
+
+  asset Asset @relation(fields: [assetId], references: [id])
+
+  historicalETFData HistoricalETFData[]
+
+  @@map("etf")
+}
+
+model HistoricalETFData {
   id           Int      @id @default(autoincrement())
-  date         DateTime @unique
-  totalVolume  Int      @map("total_volume")
-  marketOpen   Float    @map("market_open")
-  marketClose  Float    @map("market_close")
-  highestPrice Float    @map("highest_price")
-  lowestPrice  Float    @map("lowest_price")
-  createdAt    DateTime @default(now()) @map("created_at")
+  datePrice    DateTime @map("date_price") // Fecha del registro
+  closePrice   Decimal  @map("close_price") // Precio de cierre
+  openPrice    Decimal? @map("open_price") // Precio de apertura
+  highPrice    Decimal? @map("high_price") // Precio más alto del día
+  lowPrice     Decimal? @map("low_price") // Precio más bajo del día
+  volume       BigInt? // Volumen de operaciones
+  expenseRatio Decimal? @map("expense_ratio") // Ratio de gastos del ETF
+  yield        Float? // Rendimiento del ETF en ese periodo (dividend yield)
+  etfId        String   @map("etf_id")
 
-  // Relación con el stock
-  stockId Int   @unique @map("stock_id")
-  stock   Stock @relation("DailySummary", fields: [stockId], references: [id])
+  etf ETF @relation(fields: [etfId], references: [assetId])
 
-  @@map("daily_summary")
+  @@index([datePrice])
+  @@map("historical_etf_data")
+}
+
+model Crypto {
+  assetId    String  @id @map("asset_id")
+  blockchain String?
+  ticker     String
+
+  asset Asset @relation(fields: [assetId], references: [id])
+
+  derivatives          Derivative[]
+  historicalCryptoData HistoricalCryptoData[]
+
+  @@map("crypto")
+}
+
+model HistoricalCryptoData {
+  id                Int      @id @default(autoincrement())
+  datePrice         DateTime @map("date_price") // Fecha del registro
+  closePrice        Decimal  @map("close_price") // Precio de cierre
+  openPrice         Decimal? @map("open_price") // Precio de apertura
+  highPrice         Decimal? @map("high_price") // Precio más alto del día
+  lowPrice          Decimal? @map("low_price") // Precio más bajo del día
+  volume            BigInt? // Volumen de operaciones
+  marketCap         BigInt?  @map("market_cap") // Capitalización de mercado en ese momento
+  circulatingSupply Decimal? @map("circulating_supply") // Suministro circulante en esa fecha
+  cryptoId          String   @map("crypto_id")
+
+  crypto Crypto @relation(fields: [cryptoId], references: [assetId])
+
+  @@index([datePrice])
+  @@map("historical_crypto_data")
+}
+
+model Commodity {
+  assetId     String @id @map("asset_id")
+  marketValue Float? @map("market_value")
+
+  asset Asset @relation(fields: [assetId], references: [id])
+
+  historicalCommodityData HistoricalCommodityData[]
+
+  @@map("commodity")
+}
+
+model HistoricalCommodityData {
+  id          Int      @id @default(autoincrement())
+  datePrice   DateTime @map("date_price") // Fecha del registro
+  closePrice  Decimal  @map("close_price") // Precio de cierre
+  openPrice   Decimal? @map("open_price") // Precio de apertura
+  highPrice   Decimal? @map("high_price") // Precio más alto del día
+  lowPrice    Decimal? @map("low_price") // Precio más bajo del día
+  volume      Decimal? // Volumen de mercado
+  marketValue Decimal? @map("market_value") // Valor de mercado del commodity
+  commodityId String   @map("commodity_id")
+
+  commodity Commodity @relation(fields: [commodityId], references: [assetId])
+
+  @@index([datePrice])
+  @@map("historical_commodity_data")
+}
+
+model Forex {
+  assetId       String @id @map("asset_id")
+  countryFromId Int    @map("country_from_id")
+  countryToId   Int    @map("country_to_id")
+  exchangeRate  Float
+
+  countryFrom Country @relation("ForexFromCountry", fields: [countryFromId], references: [id])
+  countryTo   Country @relation("ForexToCountry", fields: [countryToId], references: [id])
+  asset       Asset   @relation(fields: [assetId], references: [id])
+
+  derivatives         Derivative[]
+  historicalForexData HistoricalForexData[]
+
+  @@map("forex")
+}
+
+model HistoricalForexData {
+  id         Int      @id @default(autoincrement())
+  datePrice  DateTime @map("date_price") // Fecha del registro
+  closePrice Decimal  @map("close_price") // Precio de cierre
+  openPrice  Decimal? @map("open_price") // Precio de apertura
+  highPrice  Decimal? @map("high_price") // Precio más alto del día
+  lowPrice   Decimal? @map("low_price") // Precio más bajo del día
+  spread     Decimal // Diferencia entre precio de compra y venta
+  volume     BigInt? // Volumen de transacciones en el par de divisas
+  forexId    String   @map("forex_id")
+
+  forex Forex @relation(fields: [forexId], references: [assetId])
+
+  @@index([datePrice])
+  @@map("historical_forex_data")
+}
+
+model Derivative {
+  id              Int       @id @default(autoincrement())
+  expiryDate      DateTime  @map("expiry_date")
+  maturityDate    DateTime? @map("maturity_date")
+  underlyingAsset String?   @map("underlying_asset")
+  spread          Decimal?
+  leverage        Decimal?
+  typeId          Int       @map("type_id")
+  forexId         String?   @map("forex_id")
+  cryptoId        String?   @map("crypto_id")
+
+  type   DerivativeType @relation(fields: [typeId], references: [id])
+  forex  Forex?         @relation(fields: [forexId], references: [assetId])
+  crypto Crypto?        @relation(fields: [cryptoId], references: [assetId])
+
+  @@map("derivative")
+}
+
+model DerivativeType {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+
+  derivatives Derivative[]
+
+  @@map("derivative_type")
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  action    String
+  timestamp DateTime @default(now())
+  userId    String   @map("user_id")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("audit_log")
+}
+
+model NotificationType {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+
+  Notifications Notification[]
+
+  @@map("notification_type")
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  message   String
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+  userId    String   @map("user_id")
+  typeId    Int      @map("type_id")
+
+  notificationType NotificationType @relation(fields: [typeId], references: [id])
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification")
+}
+
+model Alert {
+  id        Int      @id @default(autoincrement())
+  message   String
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+  userId    String   @map("user_id")
+  assetId   String   @map("asset_id")
+
+  user  User   @relation(fields: [userId], references: [id])
+  asset Asset? @relation(fields: [assetId], references: [id])
+
+  @@map("alert")
 }
