@@ -34,13 +34,15 @@ export class UsersService {
     const correctLastname = await formatName(recieveLastName);
     if (!createUserDto.role) {
       const { role, password, name, lastName, ...rest } = createUserDto;
+      const { id } = await this.prismaService.role.findUnique({ where: { name: 'user' } })
       const data = {
         ...rest,
         name: correctName,
         lastName: correctLastname,
-        password: hash
+        password: hash,
+        roleId: id
       };
-      const user = await this.prismaService.user.create({ data: data, include: { role: true } });
+      const user = await this.prismaService.user.create({ data, include: { role: true } });
       return await removeRoleIdUser(user);
     };
     const role = await this.prismaService.role.findFirst({

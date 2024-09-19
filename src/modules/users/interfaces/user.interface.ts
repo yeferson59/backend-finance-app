@@ -9,6 +9,9 @@ export interface User {
   email: string;
   emailVerified: Date | null;
   image: string | null;
+  phone: string | null;
+  isActive: boolean;
+  lastLogin: Date;
   createdAt: Date;
   updatedAt: Date;
   role: string;
