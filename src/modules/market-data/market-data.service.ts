@@ -1,13 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import axios from 'axios';
-import { Stock, StockPrice, DailySummary } from '@prisma/client';
+import { Stock, Prisma } from '@prisma/client';
+
+import { CreateAssetDto } from './dto/create-asset.dto';
 
 @Injectable()
 export class MarketDataService {
   private readonly logger = new Logger(MarketDataService.name);
-  private readonly alphaVantageApiKey = 'demo'; // Cambia esto por tu API Key
+  private readonly alphaVantageApiKey = process.env.ALPHA_VANTAGE_API_KEY; // Cambia esto por tu API Key
   private readonly alphaVantageBaseUrl = 'https://www.alphavantage.co/query';
 
   constructor(
@@ -15,22 +17,22 @@ export class MarketDataService {
   ) { }
 
   // 1. Obtener información de una acción
-  async getStock(symbol: string): Promise<Stock | null> {
-    const userFound = this.prisma.stock.findUnique({ where: { symbol } });
+  async getStock(ticker: string): Promise<Stock | null> {
+    const userFound = await this.prisma.stock.findUnique({ where: { ticker } });
     if (!userFound) return null
     return userFound
   }
 
   // 2. Crear o actualizar información de una acción
   async upsertStock(stockData: Partial<Stock>): Promise<Stock> {
-    if (!stockData.symbol) {
+    if (!stockData.ticker) {
       throw new Error('Symbol is required');
     }
 
-    const { id, createdAt, updatedAt, ...rest } = stockData; // Remover campos innecesarios
+    const { assetId, createdAt, updatedAt, ...rest } = stockData; // Remover campos innecesarios
 
     return this.prisma.stock.upsert({
-      where: { symbol: stockData.symbol },
+      where: { ticker: stockData.ticker },
       create: rest as Omit<Stock, 'id' | 'createdAt' | 'updatedAt'>,
       update: rest as Omit<Stock, 'id' | 'createdAt' | 'updatedAt'>,
     });
@@ -41,19 +43,19 @@ export class MarketDataService {
     symbol: string,
     startDate: Date,
     endDate: Date
-  ): Promise<StockPrice[]> {
+  ) {
     const stock = await this.getStock(symbol);
     if (!stock) throw new Error(`Stock with symbol ${symbol} not found`);
 
-    return this.prisma.stockPrice.findMany({
+    return this.prisma.historicalStockData.findMany({
       where: {
-        stockId: stock.id,
-        date: {
+        stockId: stock.assetId,
+        datePrice: {
           gte: startDate,  // Fecha de inicio (greater than or equal)
           lte: endDate,    // Fecha de fin (less than or equal)
         },
       },
-      orderBy: { date: 'asc' },  // Ordena los resultados por fecha ascendente
+      orderBy: { datePrice: 'asc' },  // Ordena los resultados por fecha ascendente
     });
   }
 
@@ -62,7 +64,7 @@ export class MarketDataService {
     symbol: string,
     startDate?: Date,
     endDate?: Date,
-  ): Promise<StockPrice[]> {
+  ): Promise<any> {
     // Primero buscamos la acción en la base de datos
     let stock = await this.getStock(symbol);
 
@@ -83,7 +85,7 @@ export class MarketDataService {
     }
 
     // Definir la cláusula where para las fechas
-    const whereClause: any = { stockId: stock.id };
+    const whereClause: any = { stockId: stock.assetId };
 
     if (startDate || endDate) {
       whereClause.date = {};
@@ -96,9 +98,9 @@ export class MarketDataService {
     }
 
     // Consultar los precios históricos de la acción en la base de datos
-    return this.prisma.stockPrice.findMany({
+    return this.prisma.historicalStockData.findMany({
       where: whereClause,
-      orderBy: { date: 'asc' },
+      orderBy: { datePrice: 'asc' },
     });
   }
 
@@ -107,7 +109,7 @@ export class MarketDataService {
   async updateStockPricesFromAlphaVantage(
     symbol: string,
     outputSize: 'compact' | 'full' = 'compact',
-  ): Promise<void> {
+  ) {
     const url = `${this.alphaVantageBaseUrl}?function=TIME_SERIES_DAILY&symbol=${symbol}&outputsize=${outputSize}&apikey=${this.alphaVantageApiKey}`;
 
     try {
@@ -122,10 +124,10 @@ export class MarketDataService {
       // Obtener la información de la acción (overview)
       const stockOverview = await this.fetchStockOverview(symbol);
 
+      const asset = await this.createAsset(stockOverview);
+
       // Upsert the stock (crear o actualizar la acción)
       const stock = await this.upsertStock({
-        symbol: stockOverview.symbol,
-        name: stockOverview.name,
         sector: stockOverview.sector,
         industry: stockOverview.industry,
         marketCap: stockOverview.marketCap,
@@ -139,26 +141,26 @@ export class MarketDataService {
           lowPrice: parseFloat(dailyData['3. low']),
           closePrice: parseFloat(dailyData['4. close']),
           volume: parseInt(dailyData['5. volume'], 10),
-          stockId: stock.id,
+          stockId: stock.assetId,
         }),
       );
 
-      // Insertar o actualizar los precios históricos de la acción
-      await this.prisma.$transaction(
-        stockPrices.map((price) =>
-          this.prisma.stockPrice.upsert({
-            where: { date_stockId: { date: price.date, stockId: price.stockId } },
-            create: price,
-            update: {
-              openPrice: price.openPrice,
-              highPrice: price.highPrice,
-              lowPrice: price.lowPrice,
-              closePrice: price.closePrice,
-              volume: price.volume,
-            },
-          }),
-        ),
-      );
+      // Bulk insert/update stock prices using a transaction
+      //const bulkUpsertPromises = stockPrices.map((price) =>
+      //  this.prisma.historicalStockData.upsert({
+      //    where: { datePrice: },
+      //    create: price,
+      //    update: {
+      //      openPrice: price.openPrice,
+      //      highPrice: price.highPrice,
+      //      lowPrice: price.lowPrice,
+      //      closePrice: price.closePrice,
+      //      volume: price.volume,
+      //    },
+      //  }),
+      //);
+
+      //await this.prisma.$transaction(bulkUpsertPromises);
 
       this.logger.log(`Stock prices updated for ${symbol}`);
     } catch (error) {
@@ -177,34 +179,15 @@ export class MarketDataService {
 
     for (const stock of stocks) {
       try {
-        await this.updateStockPricesFromAlphaVantage(stock.symbol);
+        await this.updateStockPricesFromAlphaVantage(stock.ticker);
       } catch (error) {
-        this.logger.error(`Failed to update prices for ${stock.symbol}: ${error.message}`);
+        this.logger.error(`Failed to update prices for ${stock.ticker}: ${error.message}`);
       }
     }
   }
 
-  // 6. Obtener resumen diario del mercado
-  async getDailySummary(date: Date): Promise<DailySummary | null> {
-    return this.prisma.dailySummary.findUnique({
-      where: { date },
-    });
-  }
 
-  // 7. Crear o actualizar el resumen diario del mercado
-  async upsertDailySummary(
-    summaryData: Partial<DailySummary>,
-  ): Promise<DailySummary> {
-    const { id, createdAt, ...rest } = summaryData;
-
-    return this.prisma.dailySummary.upsert({
-      where: { date: summaryData.date },
-      create: rest as Omit<DailySummary, 'id' | 'createdAt'>,
-      update: rest as Omit<DailySummary, 'id' | 'createdAt'>,
-    });
-  }
-
-  async fetchStockOverview(symbol: string): Promise<any> {
+  async fetchStockOverview(symbol: string) {
     const url = `${this.alphaVantageBaseUrl}?function=OVERVIEW&symbol=${symbol}&apikey=${this.alphaVantageApiKey}`;
     try {
       const response = await axios.get(url);
@@ -216,11 +199,18 @@ export class MarketDataService {
       }
 
       return {
-        symbol: data.Symbol,
+        ticker: data.Symbol,
+        assetType: data.AssetType,
         name: data.Name,
+        description: data.Description,
+        exchange: data.Exchange,
+        currency: data.Currency,
+        country: data.Country,
         sector: data.Sector,
         industry: data.Industry,
-        marketCap: parseInt(data.MarketCapitalization, 10) || 0,
+        marketCap: BigInt(data.MarketCapitalization),
+        type: 'stock',
+        dividendPerShare: parseFloat(data.DividendPerShare)
       };
     } catch (error) {
       this.logger.error(`Error fetching stock overview for ${symbol}: ${error.message}`);
@@ -228,4 +218,43 @@ export class MarketDataService {
     }
   }
 
+  private async createAsset(createAssetDto: CreateAssetDto) {
+    const assetFound = await this.prisma.asset.findFirst({
+      where: { name: createAssetDto.name }
+    });
+
+    if (assetFound) return null;
+
+    const { type, country, exchange, ...rest } = createAssetDto;
+
+    const countryAsset = await this.prisma.country.findUnique({
+      where: { name: country }
+    });
+
+    if (!countryAsset) throw new NotFoundException('Country not found');
+
+    const exchangeAsset = await this.prisma.exchange.findUnique({
+      where: { name: exchange }
+    });
+
+    if (!exchangeAsset) throw new NotFoundException('Exchange not found');
+
+    const typeAsset = await this.prisma.typeAsset.findUnique({
+      where: { name: type }
+    })
+
+    if (!typeAsset) throw new NotFoundException('type asset not exist');
+
+    const data = {
+      ...rest,
+      typeAssetId: typeAsset.id,
+      exchangeId: exchangeAsset.id
+    }
+
+    const asset = await this.prisma.asset.create({
+      data
+    })
+
+    return data
+  }
 }
