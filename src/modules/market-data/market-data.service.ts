@@ -210,7 +210,25 @@ export class MarketDataService {
         industry: data.Industry,
         marketCap: BigInt(data.MarketCapitalization),
         type: 'stock',
-        dividendPerShare: parseFloat(data.DividendPerShare)
+        dividendPerShare: BigInt(data.DividendPerShare),
+        dividendYield: BigInt(data.DividendYield),
+        dividendDate: new Date(data.DividendDate),
+        exDividendDate: new Date(data.ExDividendDate),
+        address: data.address,
+        officialSite: data.OfficialSite,
+        latestQuarter: data.LatestQuarter,
+        ebitda: data.EBITDA,
+        peRatio: data.PeRatio,
+        pegRatio: data.PegRatio,
+        bookValue: data.BookValue,
+        eps: data.EPS,
+        analystTargetPrice: data.AnalystTargetPrice,
+        analystRatingStrongBuy: data.AnalystRatingStrongBuy,
+        analystRatingBuy: data.AnalystRatingBuy,
+        analystRatingHold: data.AnalystRatingHold,
+        analystRatingSell: data.AnalystRatingSell,
+        analystRatingStrongSell: data.AnalystRatingStrongSell,
+        sharesOutstanding: data.SharesOutstanding
       };
     } catch (error) {
       this.logger.error(`Error fetching stock overview for ${symbol}: ${error.message}`);
