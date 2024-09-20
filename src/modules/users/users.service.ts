@@ -2,7 +2,6 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { User } from './interfaces/user.interface';
 import { encrypt, formatName, removeRoleIdUser } from './utils/functions';
 
 @Injectable()
@@ -10,7 +9,7 @@ export class UsersService {
 
   constructor(private readonly prismaService: PrismaService) { }
 
-  async findOneEmail(email: string): Promise<User | null> {
+  async findOneEmail(email: string) {
     const userFound = await this.prismaService.user.findFirst({
       where: { email },
       include: { role: true }
