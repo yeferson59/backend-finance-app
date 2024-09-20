@@ -17,7 +17,7 @@ export class MarketDataService {
   ) { }
 
   // 1. Obtener información de una acción
-  async getStock(ticker: string): Promise<Stock | null> {
+  async getStock(ticker: string) {
     const userFound = await this.prisma.stock.findUnique({ where: { ticker } });
     if (!userFound) return null
     return userFound
