@@ -19,24 +19,11 @@ export class MarketDataService {
   // 1. Obtener información de una acción
   async getStock(ticker: string) {
     const userFound = await this.prisma.stock.findUnique({ where: { ticker } });
-    if (!userFound) return null
-    return userFound
+    if (!userFound) return null;
+    return userFound;
   }
 
   // 2. Crear o actualizar información de una acción
-  async upsertStock(stockData: Partial<Stock>): Promise<Stock> {
-    if (!stockData.ticker) {
-      throw new Error('Symbol is required');
-    }
-
-    const { assetId, createdAt, updatedAt, ...rest } = stockData; // Remover campos innecesarios
-
-    return this.prisma.stock.upsert({
-      where: { ticker: stockData.ticker },
-      create: rest as Omit<Stock, 'id' | 'createdAt' | 'updatedAt'>,
-      update: rest as Omit<Stock, 'id' | 'createdAt' | 'updatedAt'>,
-    });
-  }
 
   // Nuevo método: Obtener precios en un rango de fechas
   async getStockPricesInDateRange(
@@ -64,7 +51,7 @@ export class MarketDataService {
     symbol: string,
     startDate?: Date,
     endDate?: Date,
-  ): Promise<any> {
+  ) {
     // Primero buscamos la acción en la base de datos
     let stock = await this.getStock(symbol);
 
@@ -124,14 +111,13 @@ export class MarketDataService {
       // Obtener la información de la acción (overview)
       const stockOverview = await this.fetchStockOverview(symbol);
 
-      const asset = await this.createAsset(stockOverview);
+      const assetInfo = await this.createAsset(stockOverview);
+
+      const asset = await this.prisma.asset.create({
+        data: assetInfo
+      })
 
       // Upsert the stock (crear o actualizar la acción)
-      const stock = await this.upsertStock({
-        sector: stockOverview.sector,
-        industry: stockOverview.industry,
-        marketCap: stockOverview.marketCap,
-      });
 
       const stockPrices = Object.entries(data).map(
         ([date, dailyData]: [string, any]) => ({
@@ -141,7 +127,7 @@ export class MarketDataService {
           lowPrice: parseFloat(dailyData['3. low']),
           closePrice: parseFloat(dailyData['4. close']),
           volume: parseInt(dailyData['5. volume'], 10),
-          stockId: stock.assetId,
+          stockId: asset.id,
         }),
       );
 
@@ -177,6 +163,7 @@ export class MarketDataService {
     this.logger.debug('Running scheduled market data update');
     const stocks = await this.prisma.stock.findMany();
 
+    if (stocks.length < 1) return null
     for (const stock of stocks) {
       try {
         await this.updateStockPricesFromAlphaVantage(stock.ticker);
